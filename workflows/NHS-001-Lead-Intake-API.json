@@ -1,0 +1,373 @@
+﻿{
+    "name":  "NHS-001 | Lead Intake API",
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "lead-intake",
+                                         "authentication":  "headerAuth",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       0,
+                                       0
+                                   ],
+                      "id":  "fecc923b-c950-4a20-ab8f-fcc34b69388d",
+                      "name":  "Webhook",
+                      "webhookId":  "1299f758-78b9-4bd3-86ca-31cd1dfb2bc2"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "\nconst request = $input.first().json;\nconst body = request.body ?? {};\n\nconst errors = [];\n\nfunction validateName(value, field) {\n  if (\n    typeof value !== \"string\" ||\n    value.trim().length \u003c 1 ||\n    value.trim().length \u003e 100\n  ) {\n    errors.push({\n      field: field,\n      message: `${field} must contain 1-100 characters.`\n    });\n  }\n}\n\nvalidateName(body.first_name, \"first_name\");\nvalidateName(body.last_name, \"last_name\");\n\nconst email = body.email;\n\nif (\n  typeof email !== \"string\" ||\n  email.trim().length \u003c 1 ||\n  email.trim().length \u003e 254 ||\n  !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email.trim())\n) {\n  errors.push({\n    field: \"email\",\n    message: \"Email must be a valid address with a maximum of 254 characters.\"\n  });\n}\n\n\nconst allowedServices = [\n  \"plumbing\",\n  \"electrical\",\n  \"hvac\",\n  \"general_repair\"\n];\n\nconst serviceType = body.service_type;\n\nif (\n  typeof serviceType !== \"string\" ||\n  !allowedServices.includes(serviceType)\n) {\n  errors.push({\n    field: \"service_type\",\n    message: \"Service type must be plumbing, electrical, hvac, or general_repair.\"\n  });\n}\n\n\nconst zipCode = body.zip_code;\n\nif (\n  typeof zipCode !== \"string\" ||\n  !/^[0-9]{5}$/.test(zipCode)\n) {\n  errors.push({\n    field: \"zip_code\",\n    message: \"ZIP code must contain exactly 5 digits.\"\n  });\n}\n\n\nconst message = body.message;\n\nif (\n  typeof message !== \"string\" ||\n  message.trim().length \u003c 10 ||\n  message.trim().length \u003e 2000\n) {\n  errors.push({\n    field: \"message\",\n    message: \"Message must contain 10-2000 characters.\"\n  });\n}\n\n\nconst submissionId = body.submission_id;\n\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n\nif (\n  typeof submissionId !== \"string\" ||\n  !uuidRegex.test(submissionId)\n) {\n  errors.push({\n    field: \"submission_id\",\n    message: \"Submission ID must be a valid UUID.\"\n  });\n}\n\n\nconst submittedAt = body.submitted_at;\n\nconst dateRegex =\n  /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})(?:\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$/;\n\nlet validDate = false;\n\nif (typeof submittedAt === \"string\") {\n  const match = submittedAt.match(dateRegex);\n\n  if (match) {\n    const year = Number(match[1]);\n    const month = Number(match[2]);\n    const day = Number(match[3]);\n    const hour = Number(match[4]);\n    const minute = Number(match[5]);\n    const second = Number(match[6]);\n    const timezone = match[7];\n\n    const daysInMonth = new Date(\n      Date.UTC(year, month, 0)\n    ).getUTCDate();\n\n    const timezoneValid =\n      timezone === \"Z\" ||\n      (\n        Number(timezone.slice(1, 3)) \u003c= 23 \u0026\u0026\n        Number(timezone.slice(4, 6)) \u003c= 59\n      );\n\n    validDate =\n      year \u003e= 100 \u0026\u0026\n      month \u003e= 1 \u0026\u0026\n      month \u003c= 12 \u0026\u0026\n      day \u003e= 1 \u0026\u0026\n      day \u003c= daysInMonth \u0026\u0026\n      hour \u003c= 23 \u0026\u0026\n      minute \u003c= 59 \u0026\u0026\n      second \u003c= 59 \u0026\u0026\n      timezoneValid;\n  }\n}\n\nif (!validDate) {\n  errors.push({\n    field: \"submitted_at\",\n    message: \"Submitted at must be a valid ISO 8601 datetime with timezone.\"\n  });\n}\n\n\nconst phone = body.phone;\n\nlet normalizedPhone = null;\n\nif (phone !== null \u0026\u0026 phone !== undefined) {\n  if (typeof phone !== \"string\" || phone.trim() === \"\") {\n    errors.push({\n      field: \"phone\",\n      message: \"Phone must be a valid US phone number.\"\n    });\n  } else {\n    const cleaned = phone.replace(/[()\\s.-]/g, \"\");\n\n    let digits = cleaned;\n\n    if (digits.startsWith(\"+1\")) {\n      digits = digits.slice(2);\n    } else if (digits.startsWith(\"1\") \u0026\u0026 digits.length === 11) {\n      digits = digits.slice(1);\n    }\n\n    if (/^[2-9]\\d{2}[2-9]\\d{6}$/.test(digits)) {\n      normalizedPhone = \"+1\" + digits;\n    } else {\n      errors.push({\n        field: \"phone\",\n        message: \"Phone must be a valid US phone number.\"\n      });\n    }\n  }\n}\n\nconst normalizedData = {\n  submission_id: body.submission_id,\n  first_name: typeof body.first_name === \"string\"\n    ? body.first_name.trim()\n    : null,\n  last_name: typeof body.last_name === \"string\"\n    ? body.last_name.trim()\n    : null,\n  email: typeof body.email === \"string\"\n    ? body.email.trim()\n    : null,\n  normalized_email: typeof body.email === \"string\"\n    ? body.email.trim().toLowerCase()\n    : null,\n  phone: normalizedPhone,\n  service_type: body.service_type,\n  zip_code: typeof body.zip_code === \"string\"\n    ? body.zip_code.trim()\n    : null,\n  message: typeof body.message === \"string\"\n    ? body.message.trim()\n    : null,\n  submitted_at: body.submitted_at\n};\n\nreturn [\n  {\n    json: {\n      isValid: errors.length === 0,\n      errors: errors,\n      normalizedData: normalizedData\n    }\n  }\n];\n\n"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       224,
+                                       0
+                                   ],
+                      "id":  "a80df0b1-d95e-449e-a419-a0d2a2a10304",
+                      "name":  "Code in JavaScript"
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict",
+                                                                            "version":  4
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "32bead31-811c-442d-9583-371e0a0be708",
+                                                                                   "leftValue":  "={{ $json.isValid }}",
+                                                                                   "rightValue":  "",
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true",
+                                                                                                    "singleValue":  true
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.4,
+                      "position":  [
+                                       448,
+                                       0
+                                   ],
+                      "id":  "002ff6f2-ae45-40f1-a99a-d54e6bc9e1af",
+                      "name":  "IsValid"
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({\n  success: false,\n  data: null,\n  error: {\n    code: \"VALIDATION_ERROR\",\n    message: \"The request contains invalid fields.\",\n    details: $json.errors\n  }\n}) }}",
+                                         "options":  {
+                                                         "responseCode":  422
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.5,
+                      "position":  [
+                                       672,
+                                       96
+                                   ],
+                      "id":  "c91ccf9b-804d-49ec-80e2-8c40fd45c697",
+                      "name":  "Respond - Validation Error"
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "=\n{{ JSON.stringify({\n  success: true,\n  data: {\n    inquiry_id: $json.result.inquiry_id,\n    submission_id: $json.result.submission_id,\n    customer_id: $json.result.customer_id,\n    duplicate: true\n  },\n  error: null\n}) }}\n",
+                                         "options":  {
+                                                         "responseCode":  200
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.5,
+                      "position":  [
+                                       1216,
+                                       -224
+                                   ],
+                      "id":  "4bab249a-ced7-4a27-9b45-2bbe7ed076aa",
+                      "name":  "Respond - Duplicate Success"
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "=\n{{ JSON.stringify({\n  success: false,\n  data: null,\n  error: {\n    code: \"SUBMISSION_CONFLICT\",\n    message: \"A submission with this ID already exists with different content.\",\n    details: [\n      {\n        field: \"submission_id\",\n        message: \"This submission ID has already been used for a different request.\"\n      }\n    ]\n  }\n}) }}\n",
+                                         "options":  {
+                                                         "responseCode":  409
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.5,
+                      "position":  [
+                                       1216,
+                                       -64
+                                   ],
+                      "id":  "9eb75ef9-50b4-4aca-b53c-b91208168f51",
+                      "name":  "Respond - Submission Conflict"
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "=\n{{ JSON.stringify({\n  success: true,\n  data: {\n    inquiry_id: $json.result.inquiry_id,\n    submission_id: $json.result.submission_id,\n    customer_id: $json.result.customer_id,\n    status: \"new\",\n    duplicate: false\n  },\n  error: null\n}) }}\n",
+                                         "options":  {
+                                                         "responseCode":  201
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.5,
+                      "position":  [
+                                       1216,
+                                       -368
+                                   ],
+                      "id":  "d1f47f2d-2a17-4787-ba64-cf135173efd3",
+                      "name":  "Respond - Inquiry Created"
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "\nSELECT public.northstar_save_lead(\n    $1::jsonb\n) AS result;\n",
+                                         "options":  {
+                                                         "queryReplacement":  "={{ [   JSON.stringify(     $(\u0027Code in JavaScript\u0027).first().json.normalizedData   ) ] }}"
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.8,
+                      "position":  [
+                                       672,
+                                       -96
+                                   ],
+                      "id":  "e66290a9-0984-4c75-b04c-269fbf567800",
+                      "name":  "Save Lead Transaction",
+                      "onError":  "continueErrorOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "rules":  {
+                                                       "values":  [
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  true,
+                                                                                                             "leftValue":  "",
+                                                                                                             "typeValidation":  "strict",
+                                                                                                             "version":  4
+                                                                                                         },
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "leftValue":  "={{ $json.result.result }}",
+                                                                                                                    "rightValue":  "created",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 },
+                                                                                                                    "id":  "1a953740-6f3c-49dd-ae41-bb124c84d4fc"
+                                                                                                                }
+                                                                                                            ],
+                                                                                             "combinator":  "and"
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "CREATED"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  true,
+                                                                                                             "leftValue":  "",
+                                                                                                             "typeValidation":  "strict",
+                                                                                                             "version":  4
+                                                                                                         },
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "ee6153b4-a8e9-4deb-8e02-89c6e5cdb645",
+                                                                                                                    "leftValue":  "={{ $json.result.result }}",
+                                                                                                                    "rightValue":  "duplicate",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals",
+                                                                                                                                     "name":  "filter.operator.equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ],
+                                                                                             "combinator":  "and"
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "DUPLICATE"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  true,
+                                                                                                             "leftValue":  "",
+                                                                                                             "typeValidation":  "strict",
+                                                                                                             "version":  4
+                                                                                                         },
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "a951eb61-05c5-4491-9aec-2ee7789e19fd",
+                                                                                                                    "leftValue":  "={{ $json.result.result }}",
+                                                                                                                    "rightValue":  "conflict",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals",
+                                                                                                                                     "name":  "filter.operator.equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ],
+                                                                                             "combinator":  "and"
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "CONFLICT"
+                                                                      }
+                                                                  ]
+                                                   },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.switch",
+                      "typeVersion":  3.5,
+                      "position":  [
+                                       928,
+                                       -240
+                                   ],
+                      "id":  "dee702f7-7039-4737-a01b-4b2846492ded",
+                      "name":  "Lead Result Router"
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "=\n{{ JSON.stringify({\n  success: false,\n  data: null,\n  error: {\n    code: \"INTERNAL_SERVER_ERROR\",\n    message: \"An unexpected error occurred while processing your request.\",\n    details: []\n  }\n}) }}\n",
+                                         "options":  {
+                                                         "responseCode":  500
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.5,
+                      "position":  [
+                                       928,
+                                       16
+                                   ],
+                      "id":  "15067497-ea5b-434d-94e6-8eae1b1c17ef",
+                      "name":  "Respond - Internal Server Error"
+                  }
+              ],
+    "connections":  {
+                        "Webhook":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Code in JavaScript",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Code in JavaScript":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "IsValid",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "IsValid":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Save Lead Transaction",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ],
+                                                     [
+                                                         {
+                                                             "node":  "Respond - Validation Error",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Respond - Inquiry Created":  {
+                                                          "main":  [
+                                                                       [
+
+                                                                       ]
+                                                                   ]
+                                                      },
+                        "Save Lead Transaction":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Lead Result Router",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ],
+                                                                   [
+                                                                       {
+                                                                           "node":  "Respond - Internal Server Error",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Lead Result Router":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Respond - Inquiry Created",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ],
+                                                                [
+                                                                    {
+                                                                        "node":  "Respond - Duplicate Success",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ],
+                                                                [
+                                                                    {
+                                                                        "node":  "Respond - Submission Conflict",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               }
+                    },
+    "active":  true,
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "binaryMode":  "separate"
+                 },
+    "nodeGroups":  [
+
+                   ],
+    "tags":  [
+
+             ]
+}
