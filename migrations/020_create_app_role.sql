@@ -34,8 +34,14 @@ ALTER ROLE northstar_app
     NOREPLICATION
     NOBYPASSRLS;
 
-GRANT CONNECT ON DATABASE northstar_crm
-    TO northstar_app;
+DO $$
+BEGIN
+    EXECUTE format(
+        'GRANT CONNECT ON DATABASE %I TO northstar_app',
+        current_database()
+    );
+END;
+$$;
 
 GRANT USAGE ON SCHEMA public
     TO northstar_app;

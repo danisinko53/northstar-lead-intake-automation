@@ -18,7 +18,6 @@
                                        -224,
                                        0
                                    ],
-                      "id":  "1734ad07-02e8-4747-ac9a-c19bbad9fe1f",
                       "name":  "Schedule Trigger"
                   },
                   {
@@ -35,7 +34,6 @@
                                        224,
                                        0
                                    ],
-                      "id":  "23e7b977-9d84-45e4-9f3e-b596770c74ea",
                       "name":  "Claim Pending Notification"
                   },
                   {
@@ -54,9 +52,7 @@
                                        448,
                                        0
                                    ],
-                      "id":  "8a57e853-3766-4e04-84d6-631eee095b01",
                       "name":  "Send Team Assignment Email",
-                      "webhookId":  "dfcab890-2639-4d4b-a179-cca432c0d37d",
                       "onError":  "continueErrorOutput"
                   },
                   {
@@ -73,7 +69,6 @@
                                        672,
                                        -96
                                    ],
-                      "id":  "d4e2a495-b8a5-4055-ae05-7975eece4ba4",
                       "name":  "Mark Notification Sent"
                   },
                   {
@@ -90,7 +85,6 @@
                                        672,
                                        96
                                    ],
-                      "id":  "f9dd72a8-1ef3-41f1-8206-518b40a50f1b",
                       "name":  "Schedule Notification Retry"
                   },
                   {
@@ -107,7 +101,6 @@
                                        0,
                                        0
                                    ],
-                      "id":  "d712c56b-6719-4699-8a95-3322a48fa86a",
                       "name":  "Recover Stale Notifications"
                   }
               ],
@@ -176,7 +169,6 @@
                      "executionOrder":  "v1",
                      "binaryMode":  "separate"
                  },
-    "versionId":  "af41dea9-67b6-499d-a4c7-05a032ef575f",
     "meta":  {
                  "templateCredsSetupCompleted":  true,
                  "instanceId":  "517b7478148d8e0930b79a3e03161fb4dba10cbb3dc2df717dc28382d95451f4"
@@ -184,7 +176,6 @@
     "nodeGroups":  [
 
                    ],
-    "id":  "yPGodyBhJ8tbY0JP",
     "tags":  [
 
              ]

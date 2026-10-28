@@ -1,0 +1,79 @@
+const DEFAULT_ORIGIN_HOST = "n8n.example.com";
+
+export default {
+  async fetch(request, env) {
+    const incomingUrl = new URL(request.url);
+
+    const originHost = env?.ORIGIN_HOST || DEFAULT_ORIGIN_HOST;
+
+    const allowedPaths = new Set([
+      "/webhook-test/lead-intake",
+      "/webhook/lead-intake"
+    ]);
+
+    if (
+      request.method !== "POST" ||
+      !allowedPaths.has(incomingUrl.pathname)
+    ) {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    let upstreamRequest = request;
+
+    // workers.dev testing: forward to the actual n8n hostname.
+    // Worker Route: fetch the original request to the origin.
+    if (incomingUrl.hostname !== originHost) {
+      const originUrl = new URL(request.url);
+      originUrl.protocol = "https:";
+      originUrl.hostname = originHost;
+      originUrl.port = "";
+
+      upstreamRequest = new Request(originUrl, request);
+    }
+
+    const response = await fetch(upstreamRequest);
+
+    if (response.status !== 422) {
+      return response;
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+
+    if (!contentType.toLowerCase().includes("application/json")) {
+      return response;
+    }
+
+    let errorBody;
+
+    try {
+      errorBody = await response.clone().json();
+    } catch {
+      return response;
+    }
+
+    if (
+      errorBody?.code !== 422 ||
+      errorBody?.message !== "Failed to parse request body"
+    ) {
+      return response;
+    }
+
+    return new Response(
+      JSON.stringify({
+        success: false,
+        data: null,
+        error: {
+          code: "BAD_JSON",
+          message: "Malformed JSON request body."
+        }
+      }),
+      {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store"
+        }
+      }
+    );
+  }
+};

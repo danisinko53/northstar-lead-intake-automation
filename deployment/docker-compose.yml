@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - northstar_pgdata:/var/lib/postgresql
+
+  n8n:
+    image: n8nio/n8n:2.45.4
+    restart: unless-stopped
+    environment:
+      N8N_HOST: ${N8N_HOST:?Set N8N_HOST}
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: ${WEBHOOK_URL:?Set WEBHOOK_URL}
+      N8N_PROXY_HOPS: "1"
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY}
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Budapest}
+      TZ: ${TZ:-Europe/Budapest}
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  cloudflared-n8n:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      - n8n
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN}
+
+volumes:
+  northstar_pgdata:
+  n8n_data:
