@@ -1,0 +1,191 @@
+{
+    "name":  "NHS-002 | Email Notification Dispatcher",
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "minutes",
+                                                                           "minutesInterval":  1
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.4,
+                      "position":  [
+                                       -224,
+                                       0
+                                   ],
+                      "id":  "1734ad07-02e8-4747-ac9a-c19bbad9fe1f",
+                      "name":  "Schedule Trigger"
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "\nWITH next_notification AS (\n    SELECT notification_id\n    FROM public.notification_outbox\n    WHERE status IN (\u0027pending\u0027, \u0027failed\u0027)\n      AND next_attempt_at \u003c= CURRENT_TIMESTAMP\n      AND attempt_count \u003c 5\n    ORDER BY next_attempt_at, created_at\n    LIMIT 1\n    FOR UPDATE SKIP LOCKED\n),\nclaimed AS (\n    UPDATE public.notification_outbox AS n\n    SET\n        status = \u0027processing\u0027,\n        attempt_count = n.attempt_count + 1,\n        claimed_at = CURRENT_TIMESTAMP,\n        last_error_code = NULL\n    FROM next_notification AS q\n    WHERE n.notification_id = q.notification_id\n    RETURNING\n        n.notification_id,\n        n.inquiry_id,\n        n.attempt_count\n)\nSELECT\n    c.notification_id,\n    c.inquiry_id,\n    c.attempt_count,\n    i.submission_id,\n    i.service_type,\n    i.assigned_team,\n    i.needs_manual_review,\n    i.status AS inquiry_status,\n    i.zip_code,\n    i.submitted_at\nFROM claimed AS c\nJOIN public.inquiries AS i\n    ON i.inquiry_id = c.inquiry_id;\n",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.8,
+                      "position":  [
+                                       224,
+                                       0
+                                   ],
+                      "id":  "23e7b977-9d84-45e4-9f3e-b596770c74ea",
+                      "name":  "Claim Pending Notification"
+                  },
+                  {
+                      "parameters":  {
+                                         "sendTo":  "notifications@example.com",
+                                         "subject":  "=\n{{ \u0027Northstar | New \u0027 + $json.service_type + \u0027 inquiry\u0027 }}\n",
+                                         "emailType":  "text",
+                                         "message":  "=\n{{\n`New customer inquiry received.\n\nService: ${$json.service_type}\nAssigned team: ${$json.assigned_team || \u0027MANUAL REVIEW\u0027}\nZIP code: ${$json.zip_code}\nInquiry ID: ${$json.inquiry_id}\nSubmission ID: ${$json.submission_id}\nStatus: ${$json.inquiry_status}\n\n${$json.needs_manual_review ? \u0027ACTION REQUIRED: Manual team assignment required.\u0027 : \u0027Please review the new inquiry.\u0027}\n\nNorthstar Home Services\nAutomated Notification Dispatcher`\n}}\n",
+                                         "options":  {
+                                                         "appendAttribution":  false
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.gmail",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       448,
+                                       0
+                                   ],
+                      "id":  "8a57e853-3766-4e04-84d6-631eee095b01",
+                      "name":  "Send Team Assignment Email",
+                      "webhookId":  "dfcab890-2639-4d4b-a179-cca432c0d37d",
+                      "onError":  "continueErrorOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "\nUPDATE public.notification_outbox\nSET\n    status = \u0027sent\u0027,\n    sent_at = CURRENT_TIMESTAMP,\n    claimed_at = NULL,\n    last_error_code = NULL\nWHERE notification_id = $1::uuid\n  AND status = \u0027processing\u0027\n  AND attempt_count = $2::integer\nRETURNING\n    notification_id,\n    status,\n    sent_at;\n",
+                                         "options":  {
+                                                         "queryReplacement":  "={{ [   $(\u0027Claim Pending Notification\u0027).first().json.notification_id,   $(\u0027Claim Pending Notification\u0027).first().json.attempt_count ] }}"
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.8,
+                      "position":  [
+                                       672,
+                                       -96
+                                   ],
+                      "id":  "d4e2a495-b8a5-4055-ae05-7975eece4ba4",
+                      "name":  "Mark Notification Sent"
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "\nUPDATE public.notification_outbox\nSET\n    status = \u0027failed\u0027,\n    claimed_at = NULL,\n    last_error_code = \u0027GMAIL_SEND_FAILED\u0027,\n    next_attempt_at = CURRENT_TIMESTAMP\n        + CASE\n            WHEN attempt_count = 1 THEN INTERVAL \u00271 minute\u0027\n            WHEN attempt_count = 2 THEN INTERVAL \u00275 minutes\u0027\n            WHEN attempt_count = 3 THEN INTERVAL \u002715 minutes\u0027\n            ELSE INTERVAL \u00271 hour\u0027\n          END\nWHERE notification_id = $1::uuid\n  AND status = \u0027processing\u0027\n  AND attempt_count = $2::integer\nRETURNING\n    notification_id,\n    status,\n    attempt_count,\n    next_attempt_at;\n",
+                                         "options":  {
+                                                         "queryReplacement":  "={{ [   $(\u0027Claim Pending Notification\u0027).first().json.notification_id,   $(\u0027Claim Pending Notification\u0027).first().json.attempt_count ] }}"
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.8,
+                      "position":  [
+                                       672,
+                                       96
+                                   ],
+                      "id":  "f9dd72a8-1ef3-41f1-8206-518b40a50f1b",
+                      "name":  "Schedule Notification Retry"
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "\nSELECT public.northstar_recover_stale_notifications()\n    AS recovered_count;\n",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.8,
+                      "position":  [
+                                       0,
+                                       0
+                                   ],
+                      "id":  "d712c56b-6719-4699-8a95-3322a48fa86a",
+                      "name":  "Recover Stale Notifications"
+                  }
+              ],
+    "connections":  {
+                        "Schedule Trigger":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Recover Stale Notifications",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Claim Pending Notification":  {
+                                                           "main":  [
+                                                                        [
+                                                                            {
+                                                                                "node":  "Send Team Assignment Email",
+                                                                                "type":  "main",
+                                                                                "index":  0
+                                                                            }
+                                                                        ]
+                                                                    ]
+                                                       },
+                        "Send Team Assignment Email":  {
+                                                           "main":  [
+                                                                        [
+                                                                            {
+                                                                                "node":  "Mark Notification Sent",
+                                                                                "type":  "main",
+                                                                                "index":  0
+                                                                            }
+                                                                        ],
+                                                                        [
+                                                                            {
+                                                                                "node":  "Schedule Notification Retry",
+                                                                                "type":  "main",
+                                                                                "index":  0
+                                                                            }
+                                                                        ]
+                                                                    ]
+                                                       },
+                        "Schedule Notification Retry":  {
+                                                            "main":  [
+                                                                         [
+
+                                                                         ]
+                                                                     ]
+                                                        },
+                        "Recover Stale Notifications":  {
+                                                            "main":  [
+                                                                         [
+                                                                             {
+                                                                                 "node":  "Claim Pending Notification",
+                                                                                 "type":  "main",
+                                                                                 "index":  0
+                                                                             }
+                                                                         ]
+                                                                     ]
+                                                        }
+                    },
+    "active":  true,
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "binaryMode":  "separate"
+                 },
+    "versionId":  "af41dea9-67b6-499d-a4c7-05a032ef575f",
+    "meta":  {
+                 "templateCredsSetupCompleted":  true,
+                 "instanceId":  "517b7478148d8e0930b79a3e03161fb4dba10cbb3dc2df717dc28382d95451f4"
+             },
+    "nodeGroups":  [
+
+                   ],
+    "id":  "yPGodyBhJ8tbY0JP",
+    "tags":  [
+
+             ]
+}

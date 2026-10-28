@@ -1,154 +1,54 @@
+# Northstar Home Services — Project Overview
 
-# Northstar Home Services
-## Lead Intake & CRM Automation
+**Type:** Fictional US home-services automation brief · **Implementation:** development/test environment · **Date reviewed:** 2026-10-28
 
-**Project ID:** NHS-001  
-**Project Type:** Workflow Automation / API Integration  
-**Platform:** n8n  
-**Database:** PostgreSQL 18  
-**Status:** Implemented and tested in a development environment
+## Problem and goal
 
----
+Northstar receives plumbing, electrical, HVAC, and general-repair inquiries. Manual intake can produce duplicate customers, lost or repeated requests, inconsistent contact data, and delayed coordinator assignment. The project provides a trusted-backend-facing intake API with durable PostgreSQL storage and operational notifications.
 
-## 1. Project Background
+## Delivered system
 
-Northstar Home Services is a fictional US-based
-home services company that receives customer
-inquiries for plumbing, electrical, HVAC, and
-general repair services.
+| Component | Purpose |
+|---|---|
+| NHS-001 · Lead Intake API | Header-authenticated POST webhook; validate, normalize, persist and respond |
+| NHS-002 · Email Notification Dispatcher | Scheduled outbox processing; Gmail delivery, retries, recovery |
+| PostgreSQL | Customer matching, atomic inquiries, routing, audit, notification queue |
+| Docker / Cloudflare Tunnel | Development infrastructure and external HTTPS access |
 
-The company needs a reliable system to receive
-incoming leads, validate customer information,
-prevent duplicate submissions, and store
-customer inquiries in a centralized database.
+## Requirements traceability
 
-## 2. Business Problem
+| Requirement | Implementation evidence | Status |
+|---|---|---|
+| FR-01 · Submission API | Authenticated webhook and JSON HTTP responses | Implemented; 401 contract deviation |
+| FR-02 · Validation | JavaScript validation and PostgreSQL constraints | Implemented; malformed JSON returns 422, not 400 |
+| FR-03 · Customer identification | Unique normalized email, submitted data preserved, discrepancy flag | Tested |
+| FR-04 · Idempotency | Unique submission ID, SHA-256 payload identity, advisory lock | Tested incl. concurrent retries |
+| FR-05 · Assignment | Configurable `service_routing`; `needs_manual_review` fallback | Tested |
+| FR-06 · Inquiry status | Database statuses: `new`, `assigned`, `contacted`, `qualified`, `closed`, `cancelled` | Implemented at database level |
+| FR-07 · Audit trail | `audit_events`, processing and validation failure events | Tested for selected paths |
+| FR-08 · Error handling | Structured validation/conflict/internal errors, transaction rollback | Tested; HTTP contract exceptions remain |
 
-Without an automated intake process, the
-company risks:
+### Assignment rules
 
-- Losing incoming customer inquiries.
-- Creating duplicate customer records.
-- Processing the same form submission multiple times.
-- Storing incomplete or invalid customer information.
-- Inconsistent handling of API and database errors.
+| Service | Coordinator |
+|---|---|
+| `plumbing` | `PLUMBING_TEAM` |
+| `electrical` | `ELECTRICAL_TEAM` |
+| `hvac` | `HVAC_TEAM` |
+| `general_repair` | `GENERAL_TEAM` |
 
-## 3. Project Objectives
+An inquiry remains stored when no active route exists, with `needs_manual_review = true`. When an existing customer's submitted name or phone differs, the customer profile is not silently overwritten: inquiry values are retained and `has_customer_discrepancy` identifies the mismatch.
 
-The automation was designed to:
+## Scope and boundaries
 
-1. Receive incoming leads through a secured HTTP API.
-2. Validate and normalize customer information.
-3. Identify existing customers using normalized email addresses.
-4. Create new customer records when necessary.
-5. Save incoming inquiries in PostgreSQL.
-6. Prevent duplicate inquiry creation.
-7. Detect conflicting submissions.
-8. Return structured HTTP responses.
-9. Ensure atomic database writes.
-10. Handle concurrent submission attempts.
+This project covers intake, initial assignment, status storage, audit, and internal e-mail notification dispatch. **A full CRM UI, lead lifecycle management interface, reporting dashboard, and real-customer deployment are outside this initial brief.**
 
-## 4. Technology Stack
+The dispatcher uses a database outbox so lead persistence does not depend on Gmail availability. A successful insert schedules a notification; retries and stale-processing recovery are handled separately.
 
-- n8n — Workflow orchestration
-- PostgreSQL 18 — Relational database
-- Docker Compose — Container orchestration
-- Cloudflare Tunnel — HTTPS endpoint exposure
-- JavaScript — Input validation and normalization
-- PL/pgSQL — Atomic database operations
-- PowerShell — API and integration testing
+## Evidence and outstanding acceptance work
 
-## 5. Implemented Features
+The original brief has **20 acceptance tests (T01–T20)**; observed results and known failures are tracked only in the [Test Report](04-test-report.md). Notable checks include two distinct submissions sharing a customer, 20 concurrent identical requests, DB shutdown/recovery, authorization rejection, and injection-like text saved as data.
 
-### Lead Intake API
+Remaining before strict contract acceptance: **401 for missing/invalid credentials**, **400 for malformed JSON**, evidence of the brief's required **automated T01–T12/T17–T18 suite**, and final operational/privacy review. A successful clean migration test does not establish production readiness.
 
-Receives customer inquiries through an
-authenticated POST webhook.
-
-### Input Validation
-
-Validates required fields, supported service
-types, US ZIP codes, phone numbers, UUIDs,
-and ISO 8601 timestamps.
-
-### Customer Deduplication
-
-Uses normalized email addresses and a
-database UNIQUE constraint to avoid duplicate
-customer records.
-
-### Submission Idempotency
-
-Uses submission IDs and SHA-256 payload hashes
-to distinguish repeated submissions from
-conflicting requests.
-
-### Atomic Database Operations
-
-A PostgreSQL function processes customer
-creation and inquiry creation within a
-single transaction.
-
-### Concurrency Protection
-
-Transaction-scoped advisory locks and database
-constraints protect against duplicate processing
-of identical submission IDs.
-
-### Structured API Responses
-
-Implemented response codes:
-
-- 201 — Inquiry created
-- 200 — Duplicate submission accepted
-- 409 — Submission conflict
-- 422 — Validation error
-- 500 — Internal server error
-
-## 6. Testing Summary
-
-The following scenarios were tested:
-
-- Valid new customer submission
-- Existing customer submitting another inquiry
-- Missing required fields
-- Multiple validation errors
-- Optional phone number omitted
-- Identical duplicate submission
-- Conflicting submission payload
-- Database transaction rollback
-- Concurrent requests using the same submission ID
-- 20-request concurrent load test
-- Database error handling
-
-The 20-request load test produced:
-
-- 1 created submission
-- 19 duplicate submissions
-- 0 reported errors
-
-Database checks confirmed that only one
-customer and one inquiry were created.
-
-## 7. Known Limitations
-
-- The native n8n Header Auth mechanism returns
-  HTTP 403 for invalid API credentials, while
-  the target API contract specifies HTTP 401.
-- Deployment and final production readiness
-  checks have not yet been completed.
-- Additional failure-mode, concurrency, and
-  security testing is recommended.
-
-## 8. Project Outcome
-
-The development implementation demonstrates
-a functioning lead intake workflow backed by
-PostgreSQL, with validation, customer
-deduplication, submission idempotency,
-transactional persistence, and structured
-error responses.
-
-The project is intended as a technical
-portfolio demonstration and does not represent
-a real client deployment.
+See the [API Contract](02-api-contract.md) and [System Architecture](03-architecture.md) for implementation details.

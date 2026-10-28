@@ -1,4 +1,4 @@
-﻿{
+{
     "name":  "NHS-001 | Lead Intake API",
     "nodes":  [
                   {
@@ -73,7 +73,7 @@
                   {
                       "parameters":  {
                                          "respondWith":  "json",
-                                         "responseBody":  "={{ JSON.stringify({\n  success: false,\n  data: null,\n  error: {\n    code: \"VALIDATION_ERROR\",\n    message: \"The request contains invalid fields.\",\n    details: $json.errors\n  }\n}) }}",
+                                         "responseBody":  "=\n{{ JSON.stringify({\n  success: false,\n  data: null,\n  error: {\n    code: \"VALIDATION_ERROR\",\n    message: \"The request contains invalid fields.\",\n    details: $(\u0027IsValid\u0027).first().json.errors\n  }\n}) }}\n",
                                          "options":  {
                                                          "responseCode":  422
                                                      }
@@ -81,8 +81,8 @@
                       "type":  "n8n-nodes-base.respondToWebhook",
                       "typeVersion":  1.5,
                       "position":  [
-                                       672,
-                                       96
+                                       1024,
+                                       256
                                    ],
                       "id":  "c91ccf9b-804d-49ec-80e2-8c40fd45c697",
                       "name":  "Respond - Validation Error"
@@ -90,7 +90,7 @@
                   {
                       "parameters":  {
                                          "respondWith":  "json",
-                                         "responseBody":  "=\n{{ JSON.stringify({\n  success: true,\n  data: {\n    inquiry_id: $json.result.inquiry_id,\n    submission_id: $json.result.submission_id,\n    customer_id: $json.result.customer_id,\n    duplicate: true\n  },\n  error: null\n}) }}\n",
+                                         "responseBody":  "={{ JSON.stringify({\n  success: true,\n  data: {\n    submission_id: $json.result.submission_id,\n    inquiry_id: $json.result.inquiry_id,\n    customer_id: $json.result.customer_id,\n    status: $json.result.status,\n    assigned_team: $json.result.assigned_team,\n    created_at: $json.result.created_at\n  },\n  error: null\n}) }}",
                                          "options":  {
                                                          "responseCode":  200
                                                      }
@@ -124,7 +124,7 @@
                   {
                       "parameters":  {
                                          "respondWith":  "json",
-                                         "responseBody":  "=\n{{ JSON.stringify({\n  success: true,\n  data: {\n    inquiry_id: $json.result.inquiry_id,\n    submission_id: $json.result.submission_id,\n    customer_id: $json.result.customer_id,\n    status: \"new\",\n    duplicate: false\n  },\n  error: null\n}) }}\n",
+                                         "responseBody":  "={{ JSON.stringify({\n  success: true,\n  data: {\n    submission_id: $json.result.submission_id,\n    inquiry_id: $json.result.inquiry_id,\n    customer_id: $json.result.customer_id,\n    status: $json.result.status,\n    assigned_team: $json.result.assigned_team,\n    created_at: $json.result.created_at\n  },\n  error: null\n}) }}",
                                          "options":  {
                                                          "responseCode":  201
                                                      }
@@ -141,7 +141,7 @@
                   {
                       "parameters":  {
                                          "operation":  "executeQuery",
-                                         "query":  "\nSELECT public.northstar_save_lead(\n    $1::jsonb\n) AS result;\n",
+                                         "query":  "SELECT public.northstar_save_lead($1::jsonb) AS result;",
                                          "options":  {
                                                          "queryReplacement":  "={{ [   JSON.stringify(     $(\u0027Code in JavaScript\u0027).first().json.normalizedData   ) ] }}"
                                                      }
@@ -252,7 +252,7 @@
                   {
                       "parameters":  {
                                          "respondWith":  "json",
-                                         "responseBody":  "=\n{{ JSON.stringify({\n  success: false,\n  data: null,\n  error: {\n    code: \"INTERNAL_SERVER_ERROR\",\n    message: \"An unexpected error occurred while processing your request.\",\n    details: []\n  }\n}) }}\n",
+                                         "responseBody":  "=\n{{ JSON.stringify({\n  success: false,\n  data: null,\n  error: {\n    code: \"INTERNAL_SERVER_ERROR\",\n    message: \"An internal error occurred while processing the request.\"\n  }\n}) }}\n",
                                          "options":  {
                                                          "responseCode":  500
                                                      }
@@ -260,11 +260,49 @@
                       "type":  "n8n-nodes-base.respondToWebhook",
                       "typeVersion":  1.5,
                       "position":  [
-                                       928,
-                                       16
+                                       1120,
+                                       80
                                    ],
                       "id":  "15067497-ea5b-434d-94e6-8eae1b1c17ef",
                       "name":  "Respond - Internal Server Error"
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "\nINSERT INTO public.audit_events (\n    event_type,\n    submission_id,\n    event_status,\n    metadata\n)\nVALUES (\n    \u0027VALIDATION_FAILED\u0027,\n    NULL,\n    \u0027rejected\u0027,\n    jsonb_build_object(\n        \u0027reason\u0027, \u0027input_validation\u0027\n    )\n)\nRETURNING event_id;\n",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.8,
+                      "position":  [
+                                       672,
+                                       112
+                                   ],
+                      "id":  "7367da3b-f12f-40ef-b3d5-2db56f017595",
+                      "name":  "Log - Validation Failure",
+                      "alwaysOutputData":  true,
+                      "onError":  "continueRegularOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "\nINSERT INTO public.audit_events (\n    event_type,\n    submission_id,\n    event_status,\n    metadata\n)\nVALUES (\n    \u0027PROCESSING_FAILED\u0027,\n    NULL,\n    \u0027failed\u0027,\n    jsonb_build_object(\n        \u0027reason\u0027, \u0027internal_processing_error\u0027\n    )\n)\nRETURNING event_id;\n",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.8,
+                      "position":  [
+                                       912,
+                                       0
+                                   ],
+                      "id":  "5ceba6e7-c9c0-46ab-9742-4c7dbd07e0e5",
+                      "name":  "Log - Processing Failure",
+                      "alwaysOutputData":  true,
+                      "onError":  "continueRegularOutput"
                   }
               ],
     "connections":  {
@@ -301,7 +339,7 @@
                                                      ],
                                                      [
                                                          {
-                                                             "node":  "Respond - Validation Error",
+                                                             "node":  "Log - Validation Failure",
                                                              "type":  "main",
                                                              "index":  0
                                                          }
@@ -326,7 +364,7 @@
                                                                    ],
                                                                    [
                                                                        {
-                                                                           "node":  "Respond - Internal Server Error",
+                                                                           "node":  "Log - Processing Failure",
                                                                            "type":  "main",
                                                                            "index":  0
                                                                        }
@@ -357,16 +395,44 @@
                                                                     }
                                                                 ]
                                                             ]
-                                               }
+                                               },
+                        "Log - Validation Failure":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Respond - Validation Error",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Log - Processing Failure":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Respond - Internal Server Error",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     }
                     },
     "active":  true,
     "settings":  {
                      "executionOrder":  "v1",
                      "binaryMode":  "separate"
                  },
+    "versionId":  "78cf81f5-8def-4d9c-8ba7-eab8afff3998",
+    "meta":  {
+                 "templateCredsSetupCompleted":  true,
+                 "instanceId":  "517b7478148d8e0930b79a3e03161fb4dba10cbb3dc2df717dc28382d95451f4"
+             },
     "nodeGroups":  [
 
                    ],
+    "id":  "f4nTKUWQxvHUOWhp",
     "tags":  [
 
              ]

@@ -1,327 +1,77 @@
+# Northstar — System Architecture
 
-# Northstar Home Services
-## System Architecture
+**Environment:** n8n 2.45.4, PostgreSQL 18, Docker Compose, Cloudflare Tunnel · **Status:** tested development implementation
 
-**Project ID:** NHS-001
-**Version:** 1.0
-**Environment:** Development / Testing
-
----
-
-## 1. Architecture Overview
-
-The Northstar Lead Intake API uses n8n for
-request validation and workflow orchestration,
-and PostgreSQL for reliable data persistence.
-
-The development environment runs in Docker
-containers and exposes the n8n API endpoint
-through a Cloudflare Tunnel.
-
-### High-Level Architecture
+## Flow
 
 ```mermaid
 flowchart TD
-    A[Website or API Client] --> B[Cloudflare Tunnel]
-    B --> C[n8n Webhook]
-    C --> D[Header Authentication]
-    D --> E[JavaScript Validation]
-    E --> F{Valid Request?}
-    F -->|No| G[HTTP 422]
-    F -->|Yes| H[PostgreSQL Transaction]
-    H --> I{Transaction Result}
-    I -->|Created| J[HTTP 201]
-    I -->|Duplicate| K[HTTP 200]
-    I -->|Conflict| L[HTTP 409]
-    H -->|Database Error| M[HTTP 500]
+  Client[Trusted website backend] --> Tunnel[HTTPS / Cloudflare Tunnel]
+  Tunnel --> Webhook[NHS-001: Header Auth webhook]
+  Webhook --> Validation[JavaScript validation + normalization]
+  Validation -->|Invalid| AuditFail[Log validation failure]
+  AuditFail --> E422[HTTP 422]
+  Validation -->|Valid| Save[northstar_save_lead JSONB]
+  Save -->|Created| E201[HTTP 201]
+  Save -->|Duplicate| E200[HTTP 200]
+  Save -->|Conflict| E409[HTTP 409]
+  Save -->|Error| ProcessFail[Log processing failure]
+  ProcessFail --> E500[HTTP 500]
+  Save --> Database[(PostgreSQL)]
+  Database --> Outbox[(notification_outbox)]
+  Schedule[NHS-002: Schedule Trigger] --> Recover[Recover stale claims]
+  Recover --> Claim[Claim one pending notification]
+  Claim --> Gmail[Gmail: send assignment notice]
+  Gmail -->|Success| Sent[Mark sent]
+  Gmail -->|Error| Retry[Schedule retry]
+  Outbox --> Claim
 ```
 
-## 2. Infrastructure Components
+The development environment uses three Compose services: `n8n`, `postgres`, `cloudflared`. The database is reached on the internal Docker network (`postgres:5432`); its host port is not published by the inspected configuration. PostgreSQL persistence is backed by a Docker volume. Hosted HTTPS addresses and credentials are deployment-specific.
 
-### Docker Compose
+## Two n8n workflows
 
-The development environment contains three
-main services:
+**NHS-001 — Lead Intake API:** webhook → JavaScript validation → `IsValid` → parameterized PostgreSQL function → result routing to 201, 200, 409; invalid inputs and processing errors are logged through PostgreSQL nodes before sending 422/500. Header Auth rejects requests ahead of this route (observed 403).
 
-- n8n: Workflow execution and API handling.
-- PostgreSQL: Customer and inquiry storage.
-- cloudflared: HTTPS tunnel to the n8n service.
+**NHS-002 — Email Notification Dispatcher:** scheduled trigger → `northstar_recover_stale_notifications()` → claim one queued item using `FOR UPDATE SKIP LOCKED` → Gmail send → parameterized state update for sent/failed. The failed path uses backoff based on `attempt_count`; a stale processing claim can be recovered. The current `.first()` expressions presume **one claimed notification per run**. Gmail delivery is at-least-once in failure windows; a crash between Gmail acceptance and DB confirmation can create a duplicate e-mail, even though each inquiry is queued once.
 
-n8n communicates with PostgreSQL over the
-Docker Compose internal network.
+## Database
 
-PostgreSQL connection configuration:
+| Table | Purpose | Key protections |
+|---|---|---|
+| `customers` | Stable customer profile | UUID PK, unique `normalized_email` |
+| `inquiries` | Individual service request and submitted data | UUID PK, unique `submission_id`, FK `customer_id`, validation constraints |
+| `service_routing` | Active service → coordinator mapping | `service_type` PK |
+| `audit_events` | Processing events and restricted metadata | Event ID and timestamp; indexes for lookup |
+| `notification_outbox` | Durable e-mail dispatch queue | Inquiry FK, send status, attempt counter, retry/claim timestamps |
 
-- Host: postgres
-- Port: 5432
-- Database: northstar_crm
-- User: northstar
-- SSL: Disabled for the internal Docker connection
+`inquiries` includes `status` (initially `new`), `assigned_team`, `needs_manual_review`, `has_customer_discrepancy`, `payload_hash`, `submitted_at`, and `created_at`. Original submitted contact details are stored on each inquiry. A discrepancy does not overwrite the existing customer record.
 
-Credentials and secrets must remain outside
-source-controlled documentation.
+### Atomic intake and idempotency
 
-### Cloudflare Tunnel
+`public.northstar_save_lead(jsonb)` computes the hash of the normalized payload, takes a transaction-scoped advisory lock keyed to `submission_id`, and resolves new/duplicate/conflicting requests. For a new request it resolves the customer by normalized email, inserts the inquiry, assigns a team (or manual review), and writes significant audit events. A failed transaction rolls back related business inserts; a successful inquiry insert triggers outbox enqueuing within the database transaction.
 
-The Cloudflare Tunnel provides an HTTPS entry
-point without directly publishing the
-PostgreSQL database.
+The outbox trigger prevents a committed lead from being silently skipped because the mail service was unavailable, but does **not** promise exactly-once Gmail delivery.
 
-The public hostname forwards requests to n8n.
+### Audit events
 
-## 3. n8n Workflow
+Recorded events include request acceptance, customer created/matched, inquiry creation, duplicate detection, assignment completed/failed, validation failure, and processing failure. Event rows contain identifiers, status, timestamps and limited structured metadata. The intent is to avoid storing API keys, passwords, or unnecessary personal details.
 
-Workflow name:
+## Security and configuration
 
-NHS-001 | Lead Intake API
+- API authentication: n8n `X-API-Key` Header Auth; trusted-backend use only.
+- SQL uses query parameters (`$1`, `$2`) in inspected PostgreSQL nodes. Text resembling SQL was verified to persist as plain data.
+- n8n database credential uses restricted `northstar_app` (not the owner/superuser). Migrations `020`–`021` configure grants and revoke `PUBLIC EXECUTE` from the three application functions.
+- Role `northstar` is an administrative database owner and should **not** be used by n8n application nodes.
+- Workflow JSONs are sanitized of credential references and pinned execution data. Imported copies require credential reassignment; Gmail recipient is a placeholder.
+- Internal failures return a generic error response, without exposing SQL internals.
 
-The active workflow consists of ten nodes.
+The inspected PostgreSQL connection uses SSL disabled **inside the Compose network**; a public DB endpoint is not part of this architecture. Production network access, HTTPS termination, role hardening, secrets rotation, monitoring, privacy and retention requirements require separate review.
 
-### Request Processing
+## Deployment and reproducibility
 
-1. Webhook
-   Receives authenticated POST requests.
+The 21 numbered migrations were applied in order to a fresh isolated PostgreSQL 18 test container, yielding five tables, three Northstar functions, one notification trigger, and a non-superuser `northstar_app` role. The temporary database was deleted after the test.
 
-2. Code in JavaScript
-   Validates and normalizes request fields.
+For another deployment: provision PostgreSQL 18 and the owner role, run migrations 001–021 in order, set an application password securely, import both n8n exports, attach Header Auth / PostgreSQL / Gmail OAuth credentials, replace the placeholder recipient, then test the endpoint and dispatcher. Do not publish the API secret or use the public client to hold it.
 
-3. IsValid
-   Routes valid and invalid requests.
-
-4. Save Lead Transaction
-   Calls the PostgreSQL function
-   northstar_save_lead(jsonb).
-
-5. Lead Result Router
-   Routes successful database results.
-
-### HTTP Responses
-
-6. Respond - Validation Error
-   HTTP 422
-
-7. Respond - Inquiry Created
-   HTTP 201
-
-8. Respond - Duplicate Success
-   HTTP 200
-
-9. Respond - Submission Conflict
-   HTTP 409
-
-10. Respond - Internal Server Error
-    HTTP 500
-
-### Workflow Diagram
-
-```mermaid
-flowchart TD
-    A[Webhook] --> B[Code in JavaScript]
-    B --> C{IsValid}
-    C -->|False| D[Respond Validation Error - 422]
-    C -->|True| E[Save Lead Transaction]
-    E -->|Error| F[Respond Internal Server Error - 500]
-    E -->|Success| G{Lead Result Router}
-    G -->|Created| H[Respond Inquiry Created - 201]
-    G -->|Duplicate| I[Respond Duplicate Success - 200]
-    G -->|Conflict| J[Respond Submission Conflict - 409]
-```
-
-## 4. Database Schema
-
-Two primary business tables are used.
-
-### customers
-
-Stores customer identity and contact details.
-
-Important columns:
-
-- customer_id: UUID primary key
-- first_name: Customer first name
-- last_name: Customer last name
-- email: Trimmed original email
-- normalized_email: Lowercase email, UNIQUE
-- phone: Optional normalized phone number
-- created_at: Creation timestamp
-- updated_at: Update timestamp
-
-### inquiries
-
-Stores individual service requests.
-
-Important columns:
-
-- inquiry_id: UUID primary key
-- submission_id: Unique external submission UUID
-- customer_id: Foreign key to customers
-- first_name: Submitted first name
-- last_name: Submitted last name
-- email: Submitted email
-- phone: Optional submitted phone
-- service_type: Requested service
-- zip_code: Five-digit US ZIP code
-- message: Inquiry message
-- assigned_team: Optional assignment
-- status: Inquiry processing status
-- submitted_at: Client submission timestamp
-- created_at: Database creation timestamp
-- payload_hash: SHA-256 hash of normalized payload
-
-### Relationship
-
-One customer may have multiple inquiries.
-
-```mermaid
-erDiagram
-    CUSTOMERS ||--o{ INQUIRIES : submits
-    CUSTOMERS {
-        uuid customer_id PK
-        text normalized_email UK
-        text first_name
-        text last_name
-        text email
-        text phone
-    }
-    INQUIRIES {
-        uuid inquiry_id PK
-        uuid submission_id UK
-        uuid customer_id FK
-        text service_type
-        text status
-        text payload_hash
-    }
-```
-
-## 5. Atomic Database Processing
-
-The PostgreSQL function:
-
-public.northstar_save_lead(jsonb)
-
-performs customer resolution and inquiry
-creation within a single database transaction.
-
-### Processing Sequence
-
-1. Parse the validated JSON payload.
-2. Compute the SHA-256 payload hash.
-3. Acquire a transaction-scoped advisory lock
-   based on submission_id.
-4. Check for an existing submission.
-5. If an existing hash matches, return duplicate.
-6. If hashes differ, return conflict.
-7. Resolve the customer using normalized_email.
-8. Create the customer if necessary.
-9. Insert the inquiry linked to customer_id.
-10. Return the created identifiers.
-
-### Atomicity
-
-If inquiry creation fails because of a
-database constraint, the transaction fails
-and the preceding customer insertion is
-rolled back.
-
-This behavior was verified with an invalid
-service_type rollback test.
-
-## 6. Idempotency and Concurrency
-
-### Submission Idempotency
-
-Each distinct lead submission has a unique
-submission_id.
-
-The normalized request payload is hashed using
-SHA-256.
-
-The system distinguishes:
-
-- New submission
-- Repeated submission with matching content
-- Reused submission ID with different content
-
-### Concurrency Protection
-
-The function uses:
-
-pg_advisory_xact_lock(...)
-
-to serialize requests sharing a submission ID.
-
-Database UNIQUE constraints provide additional
-protection against duplicate records.
-
-A 20-request concurrent load test produced:
-
-- Created: 1
-- Duplicate: 19
-- Other errors: 0
-
-A separate database verification confirmed
-that exactly one customer and inquiry existed
-for the tested submission.
-
-These tests demonstrate the observed behavior
-under the tested workload, not an absolute
-guarantee for every production scenario.
-
-## 7. Security Design
-
-### Authentication
-
-The webhook uses the X-API-Key header with
-n8n Header Auth credentials.
-
-### SQL Injection Protection
-
-Database calls use parameterized SQL queries.
-
-### Secrets
-
-Database passwords and API keys are stored
-in environment variables or n8n credentials.
-
-They must not be committed to source control.
-
-### Error Handling
-
-Unexpected database failures are routed to a
-generic HTTP 500 response.
-
-Internal database errors are not exposed
-in public response bodies.
-
-### Network Access
-
-PostgreSQL is accessed through the internal
-Docker network rather than the public tunnel.
-
-## 8. Operational Considerations
-
-Before production deployment, complete:
-
-- Production credential and secret review.
-- Production webhook configuration.
-- Rate limiting and abuse prevention.
-- Monitoring and alerting.
-- Backup and recovery verification.
-- Data retention and privacy requirements.
-- Logging and audit review.
-- Additional concurrency and failure testing.
-- Resolution or documentation of the
-  HTTP 401 versus 403 authentication difference.
-
-## 9. Project Scope
-
-This project is a fictional technical portfolio
-demonstration.
-
-It implements lead intake, validation,
-customer resolution, persistence, idempotency,
-and structured API responses.
-
-It does not yet implement a complete CRM
-user interface, team assignment workflow,
-customer notifications, or reporting dashboard.
+**Limitations:** no full CRM UI (out of scope); no demonstrated production monitoring, rate limiting, formal backup restore, or automated acceptance harness. HTTP code differences are tracked in the [API Contract](02-api-contract.md), and the acceptance matrix in the [Test Report](04-test-report.md).

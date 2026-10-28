@@ -1,165 +1,70 @@
-
 # Northstar Home Services
-## Automated Lead Intake & CRM Integration
 
-An API-driven lead intake automation built with
-n8n, PostgreSQL, Docker, and JavaScript.
+**Lead Intake & CRM Automation — fictional client portfolio case study**
 
-**Project status:** Development implementation tested  
-**Project type:** Automation portfolio case study  
-**Client:** Fictional US home services company
+An n8n + PostgreSQL system that accepts service inquiries, reuses existing customer records, assigns coordinators, records an audit trail, and dispatches Gmail notifications. Built and tested in a Docker-based development environment; **not a production deployment**.
 
----
+## Business problem and solution
 
-## The Challenge
+Website inquiries can create duplicate customer profiles, be submitted twice, or go unnoticed. Northstar separates **customers** from **inquiries** and processes each valid submission atomically.
 
-Home service companies receive inquiries from
-multiple customers, often through website forms.
+- **NHS-001 — Lead Intake API:** authenticated webhook, field validation, normalized-email matching, idempotency, configurable team routing, manual-review fallback, and structured responses.
+- **NHS-002 — Email Notification Dispatcher:** scheduled processing of a PostgreSQL outbox, Gmail sending, delivery-state tracking, retries, and stale-claim recovery.
+- **Audit:** records intake outcomes, assignments, failures, and relevant processing events with limited personal information.
 
-Manual lead handling can result in duplicate
-customer records, lost inquiries, inconsistent
-customer information, and unnecessary
-administrative work.
+## Stack
 
-The objective was to create a reliable system
-that validates incoming inquiries and stores
-them in a structured customer database.
+n8n 2.45.4 · PostgreSQL 18 · Docker Compose · Cloudflare Tunnel · JavaScript · PL/pgSQL · Gmail OAuth2 · PowerShell for verification.
 
-## The Solution
+## How it works
 
-I designed and implemented an automated
-lead intake API that:
+```text
+Trusted website backend → HTTPS → NHS-001 → PostgreSQL
+                                       ├─ customers / inquiries
+                                       ├─ service_routing / audit_events
+                                       └─ notification_outbox
+                                              ↓
+                                  NHS-002 scheduled dispatcher
+                                              ↓
+                                       Gmail notification
+```
 
-- Receives requests through an authenticated webhook.
-- Validates and normalizes customer information.
-- Identifies customers using normalized email addresses.
-- Creates customer and inquiry records atomically.
-- Prevents duplicate form submissions.
-- Detects conflicting submissions.
-- Returns structured API responses.
-- Handles unexpected database errors.
+Routing: `plumbing → PLUMBING_TEAM`, `electrical → ELECTRICAL_TEAM`, `hvac → HVAC_TEAM`, `general_repair → GENERAL_TEAM`. Missing routing keeps the inquiry and flags it for manual review.
 
-## Technology Stack
+## Repository layout
 
-| Technology | Purpose |
-|---|---|
-| n8n | Workflow automation |
-| PostgreSQL 18 | Customer and inquiry database |
-| Docker Compose | Local container infrastructure |
-| Cloudflare Tunnel | HTTPS webhook access |
-| JavaScript | Request validation |
-| PL/pgSQL | Transactional database logic |
-| PowerShell | API and concurrency testing |
+```text
+workflows/    Sanitized NHS-001 and NHS-002 n8n JSON exports
+migrations/   Numbered PostgreSQL migrations 001–021
+docs/         Project brief, API contract, architecture, test evidence
+```
 
-## How It Works
+## Setup overview
 
-1. A customer submits a service request.
-2. n8n authenticates the incoming API request.
-3. JavaScript validates and normalizes the data.
-4. PostgreSQL checks for an existing submission.
-5. The customer record is resolved or created.
-6. The inquiry is saved in the same transaction.
-7. The API returns the appropriate response.
+1. Supply your own n8n, PostgreSQL, and HTTPS endpoint configuration; never commit `.env` files or credentials.
+2. On a **new PostgreSQL 18 database**, apply `migrations/001_*.sql` through `021_*.sql` **in ascending order**, using the intended database owner role. Migration `020` creates/configures `northstar_app`; its password must be set securely outside version control.
+3. Import both files from `workflows/` into n8n. Reconnect PostgreSQL credentials (as `northstar_app`), Header Auth for NHS-001, and Gmail OAuth2 for NHS-002.
+4. In NHS-002 set the notification recipient to an authorized real mailbox; `notifications@example.com` is an **export placeholder**, not a live recipient.
+5. Confirm webhook URL, schedule, SQL query parameters, and workflow activation before testing.
 
-### API Responses
+The published JSON files intentionally **exclude credential references and pinned data**. They are portable templates, not immediately operational imports. The repository may require host-specific Docker configuration; use [System Architecture](docs/03-architecture.md) for configuration details.
 
-| HTTP Status | Meaning |
-|---|---|
-| 201 | New inquiry created |
-| 200 | Existing submission returned |
-| 409 | Conflicting submission |
-| 422 | Invalid request data |
-| 500 | Internal processing error |
+## Verification snapshot — 28 October 2026
 
-**Known limitation:** Invalid API credentials
-currently return HTTP 403 through n8n Header Auth,
-instead of the target HTTP 401 response.
+- New lead **201**, identical retry **200**, conflicting submission **409**, validation **422**, database outage **500**; response content verified for the tested paths.
+- Reused customer for differing email capitalization; concurrent identical submissions: **1 created / 19 duplicates** in the tested 20-request run.
+- Gmail dispatch and failed-send retry verified; least-privilege database account tested.
+- All **21 migrations** applied successfully to an isolated, fresh PostgreSQL 18 instance; temporary instance removed.
 
-## Database Design
+**Open API contract deviations:** missing/invalid API key returns **403** instead of required **401**; malformed JSON returns **422** instead of required **400**. These are not acceptance passes. The original brief also requires automated coverage for T01–T12 and T17–T18; a maintainable automated suite has **not yet been demonstrated**. See [Test Report](docs/04-test-report.md).
 
-The system uses two main tables:
+## Documentation
 
-- `customers` stores customer identity and contact data.
-- `inquiries` stores individual service requests.
+- [Project Overview](docs/01-project-overview.md) — business objectives and requirements
+- [API Contract](docs/02-api-contract.md) — request/response specification and deviations
+- [System Architecture](docs/03-architecture.md) — database, workflows, security, deployment notes
+- [Test Report](docs/04-test-report.md) — original acceptance tests, observed results, remaining work
 
-One customer can have multiple inquiries.
+## Disclaimer
 
-Unique database constraints prevent duplicate
-customer emails and submission identifiers.
-
-The PostgreSQL function
-`public.northstar_save_lead(jsonb)` performs
-customer resolution and inquiry creation in
-a single atomic transaction.
-
-## Reliability Testing
-
-The implementation was tested for:
-
-- Valid and invalid submissions.
-- Existing and new customers.
-- Repeated and conflicting submissions.
-- Optional input fields.
-- Multiple validation errors.
-- Transaction rollback.
-- Concurrent submission attempts.
-- Unexpected database errors.
-
-### 20-Request Load Test
-
-Twenty concurrent PowerShell jobs submitted
-the same lead.
-
-| Result | Count |
-|---|---:|
-| Created | 1 |
-| Duplicate | 19 |
-| Other errors | 0 |
-
-A follow-up database query confirmed that
-only one customer and one inquiry existed
-for the tested submission.
-
-The test demonstrates behavior under the
-tested workload; it is not a production
-performance benchmark.
-
-## Project Documentation
-
-Detailed technical documentation is available
-in the `docs` directory:
-
-- [Project Overview](docs/01-project-overview.md)
-- [API Contract](docs/02-api-contract.md)
-- [System Architecture](docs/03-architecture.md)
-- [Test Report](docs/04-test-report.md)
-
-## Database Migrations
-
-SQL migrations are stored in the
-`migrations` directory.
-
-Migration `008_atomic_lead_intake.sql`
-implements the transactional lead processing
-function.
-
-## Deployment Status
-
-The project currently runs in a Docker-based
-development environment.
-
-Production deployment, monitoring, rate limiting,
-backup restoration testing, and final security
-review remain outstanding.
-
-API keys, database passwords, and other secrets
-must not be committed to source control.
-
-## Portfolio Disclaimer
-
-Northstar Home Services is a fictional company
-created for this technical portfolio project.
-
-The system demonstrates a realistic automation
-solution but does not represent a real client
-engagement or production deployment.
+Northstar Home Services is fictional. The implementation demonstrates a realistic portfolio solution, not a real client engagement or production security certification.
