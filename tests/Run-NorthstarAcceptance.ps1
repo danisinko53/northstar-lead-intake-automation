@@ -1,8 +1,35 @@
 param(
-    [string]$ApiUrl = "https://n8n.sinko.win/webhook/lead-intake"
+    [string]$ApiUrl = "https://n8n.sinko.win/webhook/lead-intake", [string]$ComposeFile = "", [string]$EnvFile = ""
 )
 
 $ErrorActionPreference = "Stop"
+$repoRoot = Split-Path $PSScriptRoot -Parent
+
+if (-not $ComposeFile) {
+    $ComposeFile = Join-Path $repoRoot "deployment/docker-compose.yml"
+}
+
+if (-not (Test-Path -LiteralPath $ComposeFile)) {
+    throw "Compose file missing: $ComposeFile"
+}
+
+$ComposeFile = (Resolve-Path -LiteralPath $ComposeFile).Path
+$composeArgs = @("-f", $ComposeFile)
+
+if (-not $EnvFile) {
+    $candidate = Join-Path (Split-Path $ComposeFile -Parent) ".env"
+    if (Test-Path -LiteralPath $candidate) {
+        $EnvFile = $candidate
+    }
+}
+
+if ($EnvFile) {
+    if (-not (Test-Path -LiteralPath $EnvFile)) {
+        throw "Environment file missing: $EnvFile"
+    }
+    $composeArgs = @("--env-file", (Resolve-Path -LiteralPath $EnvFile).Path) + $composeArgs
+}
+
 $results = @()
 
 $secretPath = Join-Path $env:APPDATA "Northstar\api-key-v2.dpapi"
@@ -183,7 +210,90 @@ try {
         $afterConflict.Body.data.customer_id -eq $second.Body.data.customer_id
     ) "Conflict rejected; original inquiry remains accessible"
 
-    Write-Host "`n--- T05: MISSING EMAIL ---"
+    # F03_RESPONSE_SCHEMA_CHECK
+function Assert-SuccessSchema($response, $expectedSubmissionId) {
+    if ($response.Body.success -ne $true -or $null -ne $response.Body.error) {
+        throw "F03: Invalid success/error envelope."
+    }
+
+    $data = $response.Body.data
+    if ($null -eq $data) { throw "F03: Missing data." }
+
+    foreach ($field in @(
+        "submission_id", "inquiry_id", "customer_id",
+        "status", "assigned_team", "created_at"
+    )) {
+        if ($data.PSObject.Properties.Name -notcontains $field) {
+            throw "F03: Missing response field: $field"
+        }
+    }
+
+    foreach ($field in @("submission_id", "inquiry_id", "customer_id")) {
+        $uuid = [guid]::Empty
+        if ($data.$field -isnot [string] -or
+            -not [guid]::TryParse($data.$field, [ref]$uuid)) {
+            throw "F03: Invalid UUID: $field"
+        }
+    }
+
+    $timestamp = [datetimeoffset]::MinValue
+    if ($data.created_at -isnot [string] -or
+        -not [datetimeoffset]::TryParse(
+            $data.created_at, [ref]$timestamp
+        )) {
+        throw "F03: Invalid created_at timestamp."
+    }
+
+    if ($data.submission_id -ne $expectedSubmissionId) {
+        throw "F03: Incorrect submission_id."
+    }
+
+    if ($data.status -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($data.status)) {
+        throw "F03: Invalid status."
+    }
+
+    if ($null -ne $data.assigned_team -and
+        $data.assigned_team -isnot [string]) {
+        throw "F03: Invalid assigned_team type."
+    }
+}
+
+Write-Host "`n--- F03: RESPONSE CONTRACT VERIFICATION ---"
+
+Assert-SuccessSchema $first $payload1.submission_id
+Assert-SuccessSchema $second $payload2.submission_id
+Assert-SuccessSchema $duplicate $payload2.submission_id
+Assert-SuccessSchema $afterConflict $payload2.submission_id
+
+foreach ($field in @(
+    "submission_id", "inquiry_id", "customer_id",
+    "status", "assigned_team", "created_at"
+)) {
+    if ($duplicate.Body.data.$field -cne $second.Body.data.$field -or
+        $afterConflict.Body.data.$field -cne $second.Body.data.$field) {
+        throw "F03: Persisted field changed on replay: $field"
+    }
+}
+
+if ($first.Body.data.status -ne "new" -or
+    $second.Body.data.status -ne "new") {
+    throw "F03: Unexpected initial inquiry status."
+}
+
+if ($first.Body.data.assigned_team -ne "PLUMBING_TEAM" -or
+    $second.Body.data.assigned_team -ne "PLUMBING_TEAM") {
+    throw "F03: Incorrect plumbing assignment."
+}
+
+if ($conflict.Body.success -ne $false -or
+    $null -ne $conflict.Body.data -or
+    $conflict.Body.error.code -ne "IDEMPOTENCY_CONFLICT") {
+    throw "F03: Incorrect conflict envelope."
+}
+
+Write-Host "PASS - F03 response schemas and persisted replay fields."
+Write-Host "`n--- T05: MISSING EMAIL ---"
 
     $missingEmail = $payload1.Clone()
     $missingEmail.submission_id = [guid]::NewGuid().ToString()
@@ -302,7 +412,7 @@ SELECT (
 "@
 
     $t17Db = $t17Sql |
-        docker compose -f ..\docker-compose.yml exec -T postgres `
+        docker compose @composeArgs exec -T postgres `
         psql -X -A -t -v ON_ERROR_STOP=1 `
         -U northstar -d northstar_crm
 
@@ -343,7 +453,7 @@ END;
 "@
 
     $t18Db = $t18Sql |
-        docker compose -f ..\docker-compose.yml exec -T postgres `
+        docker compose @composeArgs exec -T postgres `
         psql -X -A -t -v ON_ERROR_STOP=1 `
         -U northstar -d northstar_crm
 

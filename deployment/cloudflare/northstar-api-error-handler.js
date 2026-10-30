@@ -18,6 +18,60 @@ export default {
       return new Response("Not Found", { status: 404 });
     }
 
+    const MAX_BODY_BYTES = 32 * 1024;
+
+    const payloadTooLarge = () => new Response(
+      JSON.stringify({
+        success: false,
+        data: null,
+        error: {
+          code: "PAYLOAD_TOO_LARGE",
+          message: "Request body exceeds the allowed size."
+        }
+      }),
+      {
+        status: 413,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store"
+        }
+      }
+    );
+
+    const contentLength = request.headers.get("content-length");
+
+    if (contentLength !== null) {
+      const declaredLength = Number(contentLength);
+
+      if (
+        !Number.isSafeInteger(declaredLength) ||
+        declaredLength < 0 ||
+        declaredLength > MAX_BODY_BYTES
+      ) {
+        return payloadTooLarge();
+      }
+    }
+
+    const reader = request.clone().body?.getReader();
+    let totalBytes = 0;
+
+    if (reader) {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          totalBytes += value.byteLength;
+
+          if (totalBytes > MAX_BODY_BYTES) {
+            await reader.cancel();
+            return payloadTooLarge();
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
     let upstreamRequest = request;
 
     // workers.dev testing: forward to the actual n8n hostname.

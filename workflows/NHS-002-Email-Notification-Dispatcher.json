@@ -164,15 +164,11 @@
                                                                      ]
                                                         }
                     },
-    "active":  true,
+    "active":  false,
     "settings":  {
                      "executionOrder":  "v1",
                      "binaryMode":  "separate"
                  },
-    "meta":  {
-                 "templateCredsSetupCompleted":  true,
-                 "instanceId":  "517b7478148d8e0930b79a3e03161fb4dba10cbb3dc2df717dc28382d95451f4"
-             },
     "nodeGroups":  [
 
                    ],

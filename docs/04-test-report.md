@@ -8,7 +8,7 @@
 |---|---|---|
 | T01–T04 | New/existing customer, exact replay and conflict | Automated PASS |
 | T05–T07 | Missing/invalid email and unknown service rejected | Automated PASS |
-| T08–T10 | Missing/invalid key `401`; malformed JSON `400` | Automated PASS |
+| T08–T10 | Public-edge missing/invalid key `401`; malformed JSON `400` | Automated PASS; underlying n8n auth behavior may differ |
 | T11–T12 | Case-insensitive customer match and distinct inquiries | Automated PASS |
 | T13 | Controlled database failure: no partial business records; recovery successful | Earlier manual test; response `500` in that test |
 | T14 | Concurrent identical requests | 1 created + 19 duplicate (20 requests) |
@@ -29,3 +29,17 @@
 - The latest exported `503` authentication-database-error branch is structurally verified, but the earlier controlled outage exercise returned `500` on its tested error path.
 - Recorded demo: **deferred by request**.
 - These tests do not establish production readiness or exactly-once email delivery.
+
+## Audit remediation verification (30 October 2026)
+
+- F-01: Acceptance runner supports an explicit Compose file and optional environment file; 14/14 tests passed when executed outside the repository directory against the existing development stack.
+- F-02: The six-node NHS-002 export was imported into isolated n8n and confirmed inactive.
+- F-03: Success-response schema assertions were added to the automated acceptance suite; regression passed.
+- F-04: Validation-failure audit SQL uses a parameterized submission UUID when valid. The repository expression was corrected; full audit correlation for every invalid-input case was not independently demonstrated.
+- F-05: Dispatcher SQL and node references were inspected. At-least-once delivery can repeat mail after Gmail acceptance and before the sent-state commit; the acceptance brief does not demand exactly-once delivery. The specific acknowledgment-loss window was not fault-injected.
+- F-06: Restricted database role reviewed. Direct application write grants remain because existing operations use invoker privileges; no privilege-hardening migration was applied.
+- F-07: Live HTTP `413`/`PAYLOAD_TOO_LARGE` and `400`/`BAD_JSON` regressions passed. Cloudflare rate limiting rule deployed active, but a threshold-crossing block test has not been performed.
+- F-08: HTTP `503` and `500` error branches inspected. Failed execution storage kept disabled for data minimization; complete PostgreSQL outage logging remains unavailable. Persistent diagnostics during a complete PostgreSQL outage are not guaranteed.
+- F-09: Four timestamp boundary HTTP tests passed: leap-day and `+13:59` accepted (`201`); invalid leap-day and `+14:30` rejected (`422`).
+
+Evidence boundaries: T01–T12 and T17–T18 are automated HTTP/DB acceptance checks. T13–T16, T19 and T20 have separately described manual or database-level evidence; T19 is not claimed as a full HTTP end-to-end test. The recorded demo and complete fresh-stack end-to-end deployment remain accepted exceptions.

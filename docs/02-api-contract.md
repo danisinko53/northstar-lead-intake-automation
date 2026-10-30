@@ -27,6 +27,7 @@
 | `201` | New inquiry stored | — |
 | `200` | Exact replay; existing inquiry returned | — |
 | `400` | Malformed JSON (Cloudflare Worker) | `BAD_JSON` |
+| `413` | Body larger than 32 KiB (Cloudflare Worker) | `PAYLOAD_TOO_LARGE` |
 | `401` | Missing/invalid API key | `UNAUTHORIZED` |
 | `409` | Reused submission ID with changed normalized payload | `IDEMPOTENCY_CONFLICT` |
 | `422` | Field validation failed | `VALIDATION_ERROR` |
@@ -38,3 +39,11 @@ Successful responses include `success: true` and `data` containing persisted cus
 **Idempotency:** a matching `submission_id` plus normalized payload returns the original inquiry; conflicting reuse returns `409` without replacing it. An accepted new request writes its inquiry, assignment/audit information and outbox entry transactionally.
 
 **Important:** the `400` rewrite depends on the separately deployed Cloudflare Worker. The `503` branch is configured in the exported workflow; the older controlled outage test observed a generic `500` on a different failure path. See [test evidence](04-test-report.md).
+
+## Edge protection
+
+The separately deployed Cloudflare Worker rejects request bodies larger than 32 KiB with HTTP `413` and `PAYLOAD_TOO_LARGE`. The limit is checked using the declared content length and the bytes read from the request body.
+
+An active Cloudflare rate limiting rule targets the exact URI path `/webhook/lead-intake`, with a configured threshold of 100 requests per 10 seconds per IP and a 10-second block action. Its threshold-crossing behavior has not been independently load-tested.
+
+Authentication behavior is verified at the public API boundary. The underlying n8n endpoint previously exhibited HTTP `403` on authentication failure; callers must use the documented public endpoint. Do not treat direct-origin behavior as independently verified HTTP `401`.

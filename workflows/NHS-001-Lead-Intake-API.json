@@ -257,9 +257,9 @@
                   {
                       "parameters":  {
                                          "operation":  "executeQuery",
-                                         "query":  "\nINSERT INTO public.audit_events (\n    event_type,\n    submission_id,\n    event_status,\n    metadata\n)\nVALUES (\n    \u0027VALIDATION_FAILED\u0027,\n    NULL,\n    \u0027rejected\u0027,\n    jsonb_build_object(\n        \u0027reason\u0027, \u0027input_validation\u0027\n    )\n)\nRETURNING event_id;\n",
+                                         "query":  "INSERT INTO public.audit_events (\n    event_type, submission_id, event_status, metadata\n)\nVALUES (\n    \u0027VALIDATION_FAILED\u0027,\n    CASE\n        WHEN $1::text ~* \u0027^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$\u0027\n        THEN $1::uuid\n        ELSE NULL\n    END,\n    \u0027rejected\u0027,\n    jsonb_build_object(\u0027reason\u0027, \u0027input_validation\u0027)\n)\nRETURNING event_id;",
                                          "options":  {
-
+                                                         "queryReplacement":  "={{ [ $(\u0027Code in JavaScript\u0027).first().json.normalizedData.submission_id ?? null ] }}"
                                                      }
                                      },
                       "type":  "n8n-nodes-base.postgres",

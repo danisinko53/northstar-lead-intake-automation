@@ -2,13 +2,13 @@
 
 | ID | Implementation and evidence | Status |
 |---|---|---|
-| FR-01 | Authenticated POST webhook; missing/invalid key tested as `401` | Verified |
+| FR-01 | Authenticated POST webhook; `401` verified at public edge; underlying n8n auth behavior differs | Verified at public boundary |
 | FR-02 | Field validation and normalization; automated and boundary tests | Verified for tested cases |
 | FR-03 | Unique normalized customer email, discrepancy handling; 10 parallel distinct submissions | Verified |
 | FR-04 | Unique submission ID, persisted payload identity; duplicate/conflict/concurrency tests | Verified |
 | FR-05 | Four configurable routes; missing route stored for manual review with audit | Verified |
 | FR-06 | Allowed status constraint; `new` default checked | Verified at DB level |
-| FR-07 | Audit events for accepted, created, matched, duplicate, conflict, validation/processing failure and assignment fallback | Verified on tested paths |
+| FR-07 | Audit events for accepted, created, matched, duplicate, conflict, validation/processing failure and assignment fallback; DB-wide outage logging not durable | Verified on tested paths; outage limitation |
 | FR-08 | Structured `401`/`400`/`409`/`422`/`500` handling and transactional safety; `503` branch configuration | Partially verified on live failure paths |
 
 ## Original acceptance tests
@@ -38,3 +38,9 @@
 | Recorded demonstration | **Deferred by request** |
 
 Evidence detail belongs in the [test report](04-test-report.md); setup detail belongs in [deployment/README.md](../deployment/README.md).
+
+## Verification interpretation
+
+The grouped T01–T12 and T17–T18 rows above cover all 14 automated tests; they are not missing individual test IDs. Detailed evidence and limitations are maintained in [the acceptance test report](04-test-report.md). The remaining T13–T16 and T19–T20 scenarios are supported by manual or database-level checks as individually described there.
+
+The HTTP `413` body limit and the Cloudflare rate limiting rule are supplemental edge protections. Neither changes the original FR-01–FR-08 business requirements or resolves the accepted fresh-stack end-to-end exception.
